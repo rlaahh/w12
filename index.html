@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Reframed</title>
+    <style>
+        body { margin: 0; overflow: hidden; }
+        canvas { display: block; }
+    </style>
+</head>
+<body>
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.150.1/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.150.1/examples/jsm/"
+            }
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+        // --- 1. 기본 설정 ---
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000); 
+
+        // yawObject: 카메라를 좌우(Y축)로 회전시키는 부모 객체
+        const yawObject = new THREE.Object3D();
+        yawObject.position.set(0, 0, 0);
+        yawObject.add(camera); 
+        scene.add(yawObject);  
+        
+        camera.position.set(0, 0, 0); 
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setClearColor(0xffffff);
+        document.body.appendChild(renderer.domElement);
+
+        // 환경 맵 (반사) 설정
+        const cubeRenderTarget = new THREE.WebGLCubeRenderTarget(256, { 
+            format: THREE.RGBAFormat,
+            generateMipmaps: true,
+            minFilter: THREE.LinearMipmapLinearFilter
+        });
+        const cubeCamera = new THREE.CubeCamera(0.1, 100, cubeRenderTarget);
+        scene.add(cubeCamera); 
+
+        // --- 2. 빛 ---
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.5); 
+        scene.add(ambientLight);
+        
+        const directionalLight = new THREE.DirectionalLight(0x644F1F, 1.5); 
+        directionalLight.position.set(-0.5, 1, 1.8);
+        scene.add(directionalLight);
+
+        // --- 3. 이미지 패널 생성 ---
+        const imageUrls = [];
+        const totalImageCount = 30; 
+        for (let i = 1; i <= totalImageCount; i++) {
+            imageUrls.push(`web-source/${i}.jpg`); 
+        }
+
+        const textureLoader = new THREE.TextureLoader();
+
+        const sphereRadius = 6; 
+        const numLayers = 5; 
+        const imagesPerLayer = Math.ceil(totalImageCount / numLayers); 
+        const layerSpacingAngle = Math.PI * 0.10;
+        
+        const phiLayers = [
+            Math.PI * 0.5 - layerSpacingAngle * 2,
+            Math.PI * 0.5 - layerSpacingAngle * 1,
+            Math.PI * 0.5,
+            Math.PI * 0.5 + layerSpacingAngle * 1,
+            Math.PI * 0.5 + layerSpacingAngle * 2
+        ];
+        
+        const imageMeshes = [];
+        const imageUrlsMap = new Map(); // Mesh 객체와 이동할 URL 매핑
+
+        imageUrls.forEach((url, index) => {
+            textureLoader.load(url, (texture) => {
+                const aspectRatio = texture.image.width / texture.image.height;
+                const maxDimension = 1.5; 
+                let planeWidth, planeHeight;
+
+                if (aspectRatio >= 1) { 
+                    planeWidth = maxDimension;
+                    planeHeight = planeWidth / aspectRatio; 
+                } else { 
+                    planeHeight = maxDimension;
+                    planeWidth = planeHeight * aspectRatio; 
+                }
+
+                const geometry = new THREE.PlaneGeometry(planeWidth, planeHeight);
+                const material = new THREE.MeshBasicMaterial({ map: texture, side: THREE.DoubleSide });
+                const mesh = new THREE.Mesh(geometry, material);
+                
+                // 💡 [수정된 로직] 모든 이미지에 대해 파일명 기반으로 URL 설정
+                const fileNameMatch = url.match(/(\d+)\.jpg$/);
+                let targetPage;
+
+                if (fileNameMatch && fileNameMatch[1]) {
+                    // 예: web-source/9.jpg -> 9.html
+                    const imageNumber = fileNameMatch[1];
+                    targetPage = `${imageNumber}.html`;
+                } else {
+                    // 정규 표현식 패턴이 일치하지 않을 경우 대비
+                    targetPage = `page_default.html`; 
+                    console.warn(`파일명을 추출할 수 없어 기본 URL을 사용합니다: ${url}`);
+                }
+
+                imageUrlsMap.set(mesh, targetPage); 
+                imageMeshes.push(mesh); 
+
+                const layerIndex = Math.floor(index / imagesPerLayer);
+                const phi = phiLayers[layerIndex];
+                const indexInLayer = index % imagesPerLayer;
+                
+                let startOffset = 0;
+                if (layerIndex % 2 !== 0) { 
+                    startOffset = (Math.PI / imagesPerLayer) / 2;
+                }
+                
+                const angleIncrement = (indexInLayer / imagesPerLayer) * Math.PI;
+                const theta_final_corrected = angleIncrement + startOffset + (Math.PI / 1.8); 
+
+                mesh.position.setFromSphericalCoords(sphereRadius, phi, theta_final_corrected);
+                
+                mesh.lookAt(0, 0, 0); 
+
+                mesh.renderOrder = 0; 
+                scene.add(mesh);
+            });
+        });
+
+        // --- 4. 커스텀 3D 모델 로드 ---
+        const gltfLoader = new GLTFLoader();
+        let controller; 
+        
+        gltfLoader.load(
+            'model2.glb', 
+            (gltf) => {
+                const model = gltf.scene;
+
+                // 재질 및 깊이 테스트 설정 (depthTest, depthWrite 기본값 유지)
+                model.traverse((child) => {
+                    if (child.isMesh) {
+                        const originalMaterial = child.material;
+                        if (originalMaterial.isMeshStandardMaterial) {
+                            originalMaterial.envMap = cubeRenderTarget.texture; 
+                            originalMaterial.needsUpdate = true;
+                        }
+                        child.renderOrder = 1; 
+                    }
+                });
+
+                // 크기 및 위치 보정
+                const box = new THREE.Box3().setFromObject(model);
+                const size = box.getSize(new THREE.Vector3());
+                const center = box.getCenter(new THREE.Vector3());
+                const maxAxis = Math.max(size.x, size.y, size.z);
+                const targetScale = 2.0 / maxAxis; 
+                const scaleMultiplier = 2; 
+                const finalScale = targetScale * scaleMultiplier;
+
+                model.scale.set(finalScale, finalScale, finalScale);
+                model.position.x -= center.x * finalScale;
+                model.position.y -= center.y * finalScale;
+                model.position.z -= center.z * finalScale; 
+
+                // 컨트롤러 컨테이너 설정
+                const container = new THREE.Object3D();
+                container.add(model);
+                container.position.set(0, 0, -5); 
+
+                controller = container; 
+                camera.add(controller);
+                console.log("모델 로드 완료"); 
+            },
+            undefined,
+            (error) => {
+                console.error('모델 로드 실패:', error);
+            }
+        );
+        
+        // --- 5. 마우스 위치 추적 및 Raycaster ---
+        const raycaster = new THREE.Raycaster();
+        const mouseVector = new THREE.Vector2();
+        let mouseX = 0;
+        let mouseY = 0;
+        
+        function onMouseMove(event) {
+            mouseX = (event.clientX / window.innerWidth) * 2 - 1;
+            mouseY = -(event.clientY / window.innerHeight) * 2 + 1;
+        }
+
+        function onMouseClick(event) {
+            mouseVector.x = (event.clientX / window.innerWidth) * 2 - 1;
+            mouseVector.y = -(event.clientY / window.innerHeight) * 2 + 1;
+
+            raycaster.setFromCamera(mouseVector, camera);
+
+            const intersects = raycaster.intersectObjects(imageMeshes);
+
+            if (intersects.length > 0) {
+                const intersectedObject = intersects[0].object;
+                const targetUrl = imageUrlsMap.get(intersectedObject);
+
+                if (targetUrl) {
+                    console.log(`페이지 이동: ${targetUrl}`);
+                    window.location.href = targetUrl; 
+                }
+            }
+        }
+
+        window.addEventListener('mousemove', onMouseMove);
+        window.addEventListener('click', onMouseClick);
+
+        // --- 6. 애니메이션 루프 (부드러운 움직임 구현) ---
+        function animate() {
+            requestAnimationFrame(animate);
+
+            // 1. 카메라(시선) 회전
+            const targetCameraRotY = -mouseX * (Math.PI / 4); 
+            const targetCameraRotX = mouseY * (Math.PI / 6); 
+
+            yawObject.rotation.y += (targetCameraRotY - yawObject.rotation.y) * 0.05;
+            camera.rotation.x += (targetCameraRotX - camera.rotation.x) * 0.05;
+
+
+            // 2. 로고(모델) 회전
+            if (controller) {
+                const targetLogoRotY = mouseX * 0.5; 
+                const targetLogoRotX = -mouseY * 0.5;
+
+                controller.rotation.y += (targetLogoRotY - controller.rotation.y) * 0.1;
+                controller.rotation.x += (targetLogoRotX - controller.rotation.x) * 0.1;
+
+                // 3. 환경 맵 업데이트 (반사 효과)
+                controller.visible = false;
+                
+                cubeCamera.position.copy(yawObject.position);
+                cubeCamera.rotation.copy(yawObject.rotation); 
+                
+                cubeCamera.update(renderer, scene); 
+                controller.visible = true;
+            }
+
+            renderer.render(scene, camera);
+        }
+        animate();
+
+        // --- 7. 창 크기 변경 대응 ---
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+    </script>
+</body>
+</html>

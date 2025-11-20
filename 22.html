@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Reframed</title>
+    <style>
+        body {
+            /* 수직 정렬을 위해 flexbox 사용 */
+            display: flex; 
+            flex-direction: column; /* 세로로 배치 */
+            align-items: center; /* 가운데 정렬 */
+            min-height: 100vh;
+            background: #ffffff;
+            margin: 0;
+            position: relative;
+        }
+        
+        /* Three.js 캔버스 스타일 수정 (반응형 적용) */
+        #three-container {
+            position: relative; 
+            top: 0;
+            left: 0;
+            transform: none; 
+            width: 80vw; /* 슬라이더와 동일하게 80vw로 설정 */
+            max-width: 800px; /* 슬라이더와 동일하게 800px로 설정 */
+            
+            /* 💡 수정: 고정된 height 대신 aspect-ratio를 사용하여 반응형 높이 적용 (예: 4:1 비율) */
+            aspect-ratio: 4 / 1; 
+            height: auto; 
+            
+            z-index: 10;
+            margin-top: 20px; /* 상단 여백 */
+            margin-bottom: 0px; /* 슬라이더와의 간격 */
+        }
+
+        /* 💡 추가: Three.js 캔버스가 부모 컨테이너의 100%를 차지하도록 명시적 설정 */
+        #three-container canvas {
+            width: 100% !important;
+            height: 100% !important;
+            display: block;
+        }
+
+        /* 기존 이미지 슬라이더 스타일 */
+        .comparison-container {
+            position: relative;
+            width: 80vw;
+            max-width: 1000px;
+            aspect-ratio: 16 / 9;
+            overflow: hidden;
+            z-index: 50;
+            margin-top: 50px;
+        }
+        .comparison-container img {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            pointer-events: none;
+        }
+        .image-before {
+            z-index: 10;
+            clip-path: inset(0 50% 0 0);
+        }
+        .image-after {
+            z-index: 1;
+        }
+        .slider-handle {
+    position: absolute;
+    z-index: 20;
+    top: 0;
+    left: 50%;
+    width: 0px; 
+    height: 100%;
+    
+    /* 💡 변경: 그림자(빛)를 사용하므로 배경색은 투명하게 */
+    background-color: transparent; 
+    
+    cursor: ew-resize;
+    transform: translateX(-50%);
+    transition: left 0.15s ease-out; 
+}
+        .slider-handle::after {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 30px;
+            height: 30px;
+            background: white;
+            border-radius: 50%;
+            display: grid;
+            place-items: center;
+            font-weight: bold;
+            font-size: 1.2rem;
+            box-shadow: 0 0 20px rgba(255, 236, 197, 0.8);
+        }
+        
+        ::selection {
+            background: transparent; 
+            color: inherit;
+        }
+    </style>
+</head>
+<body>
+    <div id="three-container"></div>
+    
+    <div class="comparison-container" id="my-container">
+        <img class="image-before" src="web-source/22.png" alt="Before"> 
+        <img class="image-after" src="web-source/22-1.jpg" alt="After">
+        <div class="slider-handle" id="my-slider"></div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const container = document.getElementById('my-container');
+            const slider = document.getElementById('my-slider');
+            const imageBefore = container.querySelector('.image-before');
+
+            let isDragging = false;
+
+            const startDrag = (e) => { isDragging = true; };
+            const stopDrag = () => { isDragging = false; };
+
+            const onDrag = (e) => {
+                if (!isDragging) return;
+                let clientX = e.clientX || (e.changedTouches && e.changedTouches[0].clientX);
+                if (clientX === undefined) return;
+
+                const rect = container.getBoundingClientRect();
+                let newX = clientX - rect.left;
+                if (newX < 0) newX = 0;
+                if (newX > rect.width) newX = rect.width;
+                const percentage = (newX / rect.width) * 100;
+                slider.style.left = percentage + '%';
+                imageBefore.style.clipPath = `inset(0 ${100 - percentage}% 0 0)`;
+            };
+
+            slider.addEventListener('mousedown', startDrag);
+            document.addEventListener('mouseup', stopDrag);
+            document.addEventListener('mousemove', onDrag);
+            slider.addEventListener('touchstart', startDrag, { passive: true });
+            document.addEventListener('touchend', stopDrag, { passive: true });
+            document.addEventListener('touchmove', onDrag, { passive: true });
+        });
+    </script>
+    
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.150.1/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.150.1/examples/jsm/"
+            }
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+    
+        const container = document.getElementById('three-container');
+        const width = container.clientWidth;
+        const height = container.clientHeight;
+    
+        // --- 1. 기본 설정 ---
+        const scene = new THREE.Scene();
+        // 카메라 FOV를 20도로 설정하여 모델을 크게 보이게 함
+        const camera = new THREE.PerspectiveCamera(20, width / height, 0.1, 100); 
+        camera.position.set(0, 0, 30); 
+    
+        const renderer = new THREE.WebGLRenderer({ antialias: true }); 
+        renderer.setSize(width, height);
+        renderer.setPixelRatio(window.devicePixelRatio);
+        container.appendChild(renderer.domElement);
+        
+        // 배경색을 흰색으로 설정
+        renderer.setClearColor(0xffffff); 
+        
+        // 환경 맵 설정을 위한 큐브 카메라
+        const cubeRenderTarget = new THREE.WebGLCubeRenderTarget(256, { 
+            format: THREE.RGBAFormat,
+            generateMipmaps: true,
+            minFilter: THREE.LinearMipmapLinearFilter
+        });
+        const cubeCamera = new THREE.CubeCamera(0.1, 100, cubeRenderTarget);
+        scene.add(cubeCamera); 
+    
+        // --- 2. 빛 ---
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.5); 
+        scene.add(ambientLight);
+        
+        const directionalLight = new THREE.DirectionalLight(0x644F1F, 2); 
+        directionalLight.position.set(-0.5, 1, 1);
+        scene.add(directionalLight);
+    
+        // --- 3. 커스텀 3D 모델 로드 ---
+        const gltfLoader = new GLTFLoader();
+        let controller; // 모델을 감싸 회전시키는 역할을 할 Object3D
+        
+        gltfLoader.load(
+            // 주의: 이 파일 경로는 실제 환경에 맞게 수정해야 합니다.
+            'model2.glb', 
+            (gltf) => {
+                const model = gltf.scene;
+    
+                // 환경 맵 적용 (모델의 메탈릭/반사광 효과를 위해)
+                model.traverse((child) => {
+                    if (child.isMesh) {
+                        const originalMaterial = child.material;
+                        if (originalMaterial.isMeshStandardMaterial) {
+                            originalMaterial.envMap = cubeRenderTarget.texture; 
+                            originalMaterial.needsUpdate = true;
+                        }
+                    }
+                });
+    
+                // 모델 크기 및 위치 보정 (뷰포트에 맞게 크기 조정)
+                const box = new THREE.Box3().setFromObject(model);
+                const size = box.getSize(new THREE.Vector3());
+                const center = box.getCenter(new THREE.Vector3());
+                const maxAxis = Math.max(size.x, size.y, size.z);
+                const targetScale = 5.0 / maxAxis; 
+                const scaleMultiplier = 5; // 모델 크기를 더 키우기 위한 배수
+                const finalScale = targetScale * scaleMultiplier;
+    
+                model.scale.set(finalScale, finalScale, finalScale);
+                
+                // 모델을 중앙에 위치
+                model.position.x -= center.x * finalScale;
+                model.position.y -= center.y * finalScale;
+                model.position.z -= center.z * finalScale; 
+    
+                controller = new THREE.Object3D();
+                controller.add(model);
+                scene.add(controller);
+                
+                controller.position.set(0, 0, 0); 
+            },
+            undefined,
+            (error) => {
+                console.error('모델 로드 실패:', error);
+            }
+        );
+        
+        // --- 4. 마우스 움직임 감지 및 애니메이션 (회전) ---
+        let mouseX = 0;
+        let mouseY = 0;
+    
+        function onMouseMove(event) {
+            // 전체 창 크기를 기준으로 마우스 위치를 -1 ~ 1로 정규화
+            mouseX = (event.clientX / window.innerWidth) * 2 - 1;
+            mouseY = -(event.clientY / window.innerHeight) * 2 + 1; 
+        }
+        window.addEventListener('mousemove', onMouseMove); 
+    
+        function animate() {
+            requestAnimationFrame(animate);
+    
+            if (controller) {
+                // 마우스 위치에 따라 회전 목표 설정 (부드러운 움직임을 위해 보간 적용)
+                const targetLogoRotY = mouseX * 0.2; 
+                const targetLogoRotX = -mouseY * 0.2;
+    
+                // 부드러운 회전을 위한 보간
+                controller.rotation.y += (targetLogoRotY - controller.rotation.y) * 0.1;
+                controller.rotation.x += (targetLogoRotX - controller.rotation.x) * 0.1;
+    
+                // 환경 맵 업데이트
+                controller.visible = false;
+                cubeCamera.update(renderer, scene); 
+                controller.visible = true;
+            }
+    
+            renderer.render(scene, camera);
+        }
+        animate();
+    
+        // --- 5. 창 크기 변경 대응 (반응형의 핵심) ---
+        window.addEventListener('resize', () => {
+            const newWidth = container.clientWidth;
+            const newHeight = container.clientHeight;
+            
+            // 캔버스 크기 업데이트
+            camera.aspect = newWidth / newHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(newWidth, newHeight);
+        });
+    </script>
+</body>
+</html>
+
